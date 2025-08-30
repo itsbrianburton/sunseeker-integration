@@ -16,8 +16,14 @@ from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
     CONF_MQTT_TOPIC_PREFIX,
+    CONF_MQTT_HOST,
+    CONF_MQTT_PORT,
+    CONF_MQTT_USERNAME,
+    CONF_MQTT_PASSWORD,
     DEFAULT_NAME,
     DEFAULT_TOPIC_PREFIX,
+    DEFAULT_MQTT_HOST,
+    DEFAULT_MQTT_PORT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,6 +33,10 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
         vol.Required(CONF_DEVICE_ID): str,
         vol.Optional(CONF_MQTT_TOPIC_PREFIX, default=DEFAULT_TOPIC_PREFIX): str,
+        vol.Required(CONF_MQTT_HOST, default=DEFAULT_MQTT_HOST): str,
+        vol.Required(CONF_MQTT_PORT, default=DEFAULT_MQTT_PORT): int,
+        vol.Optional(CONF_MQTT_USERNAME): str,
+        vol.Optional(CONF_MQTT_PASSWORD): str,
     }
 )
 

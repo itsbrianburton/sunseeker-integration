@@ -6,8 +6,10 @@ import json
 import logging
 from datetime import timedelta
 from typing import Any
+import ssl
 
-from homeassistant.components import mqtt
+import paho.mqtt.client as mqtt
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
@@ -18,6 +20,10 @@ from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
     CONF_MQTT_TOPIC_PREFIX,
+    CONF_MQTT_HOST,
+    CONF_MQTT_PORT,
+    CONF_MQTT_USERNAME,
+    CONF_MQTT_PASSWORD,
     DEFAULT_TOPIC_PREFIX,
     TOPIC_COMMAND,
     TOPIC_RESPONSE,
@@ -42,6 +48,7 @@ class SunseekerCoordinator(DataUpdateCoordinator):
         self,
         hass: HomeAssistant,
         device_id: str,
+        mqtt_config: dict[str, Any],
         topic_prefix: str = DEFAULT_TOPIC_PREFIX,
     ) -> None:
         """Initialize the coordinator."""
@@ -61,9 +68,91 @@ class SunseekerCoordinator(DataUpdateCoordinator):
         )
         self._device_info: DeviceInfo | None = None
         self._status_data = {}
+        self._mqtt_config = mqtt_config
+        self._mqtt_client: mqtt.Client | None = None
+        self._connected = False
+
+    async def async_setup(self) -> None:
+        """Set up MQTT connection."""
+        await self.hass.async_add_executor_job(self._setup_mqtt)
+
+    def _setup_mqtt(self) -> None:
+        """Set up MQTT client (runs in executor)."""
+        self._mqtt_client = mqtt.Client()
+        self._mqtt_client.on_connect = self._on_mqtt_connect
+        self._mqtt_client.on_disconnect = self._on_mqtt_disconnect
+        self._mqtt_client.on_message = self._on_mqtt_message
+
+        # Configure credentials if provided
+        if self._mqtt_config.get(CONF_MQTT_USERNAME):
+            self._mqtt_client.username_pw_set(
+                self._mqtt_config[CONF_MQTT_USERNAME],
+                self._mqtt_config.get(CONF_MQTT_PASSWORD, "")
+            )
+
+        try:
+            self._mqtt_client.connect(
+                self._mqtt_config[CONF_MQTT_HOST],
+                self._mqtt_config[CONF_MQTT_PORT],
+                60
+            )
+            self._mqtt_client.loop_start()
+            _LOGGER.info("MQTT client started for device %s", self.device_id)
+        except Exception as err:
+            _LOGGER.error("Failed to connect to MQTT broker: %s", err)
+
+    def _on_mqtt_connect(self, client, userdata, flags, rc):
+        """Handle MQTT connection."""
+        if rc == 0:
+            _LOGGER.info("Connected to MQTT broker for device %s", self.device_id)
+            client.subscribe(self.response_topic, qos=1)
+            self._connected = True
+            # Request initial status
+            self.hass.async_create_task(self._async_request_initial_status())
+        else:
+            _LOGGER.error("Failed to connect to MQTT broker, code: %s", rc)
+            self._connected = False
+
+    def _on_mqtt_disconnect(self, client, userdata, rc):
+        """Handle MQTT disconnection."""
+        _LOGGER.warning("Disconnected from MQTT broker for device %s", self.device_id)
+        self._connected = False
+
+    def _on_mqtt_message(self, client, userdata, msg):
+        """Handle MQTT message (runs in executor)."""
+        # Schedule handling in HA event loop
+        self.hass.async_create_task(self._async_handle_mqtt_message(msg))
+
+    async def _async_handle_mqtt_message(self, msg) -> None:
+        """Handle MQTT message in HA event loop."""
+        try:
+            data = json.loads(msg.payload.decode())
+            _LOGGER.debug("Received from mower: %s", data)
+
+            # Handle status response
+            if data.get("cmd") == RESP_ROBOT_STATUS:
+                self._status_data = data
+                self.async_set_updated_data(data)
+
+                # Update device info if we don't have it yet
+                if self._device_info is None:
+                    self._update_device_info(data)
+
+        except json.JSONDecodeError:
+            _LOGGER.error("Invalid JSON from mower: %s", msg.payload)
+        except Exception as err:
+            _LOGGER.error("Error processing MQTT message: %s", err)
+
+    async def _async_request_initial_status(self) -> None:
+        """Request initial status after connection."""
+        await asyncio.sleep(1)  # Give connection time to stabilize
+        await self.async_send_command(CMD_STATUS_UPDATE)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the mower."""
+        if not self._connected:
+            raise UpdateFailed("MQTT not connected")
+
         try:
             # Request status update
             await self.async_send_command(CMD_STATUS_UPDATE)
@@ -73,36 +162,22 @@ class SunseekerCoordinator(DataUpdateCoordinator):
 
     async def async_send_command(self, command: dict[str, Any]) -> None:
         """Send a command to the mower."""
+        if not self._mqtt_client or not self._connected:
+            raise ConnectionError("MQTT client not connected")
+
         try:
             payload = json.dumps(command)
-            await mqtt.async_publish(
-                self.hass, self.command_topic, payload, qos=1, retain=False
+            await self.hass.async_add_executor_job(
+                self._mqtt_client.publish,
+                self.command_topic,
+                payload,
+                1,  # QoS
+                False  # Retain
             )
             _LOGGER.debug("Sent command to %s: %s", self.command_topic, payload)
         except Exception as err:
             _LOGGER.error("Failed to send command: %s", err)
             raise
-
-    @callback
-    def handle_mqtt_message(self, msg) -> None:
-        """Handle MQTT message from mower."""
-        try:
-            data = json.loads(msg.payload)
-            _LOGGER.debug("Received from mower: %s", data)
-            
-            # Handle status response
-            if data.get("cmd") == RESP_ROBOT_STATUS:
-                self._status_data = data
-                self.async_set_updated_data(data)
-                
-                # Update device info if we don't have it yet
-                if self._device_info is None:
-                    self._update_device_info(data)
-                    
-        except json.JSONDecodeError:
-            _LOGGER.error("Invalid JSON from mower: %s", msg.payload)
-        except Exception as err:
-            _LOGGER.error("Error processing MQTT message: %s", err)
 
     def _update_device_info(self, data: dict[str, Any]) -> None:
         """Update device information."""
@@ -120,31 +195,43 @@ class SunseekerCoordinator(DataUpdateCoordinator):
         """Return device information."""
         return self._device_info
 
+    async def async_shutdown(self) -> None:
+        """Shutdown MQTT connection."""
+        if self._mqtt_client:
+            await self.hass.async_add_executor_job(self._mqtt_client.loop_stop)
+            await self.hass.async_add_executor_job(self._mqtt_client.disconnect)
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Sunseeker from a config entry."""
     device_id = entry.data[CONF_DEVICE_ID]
     topic_prefix = entry.data.get(CONF_MQTT_TOPIC_PREFIX, DEFAULT_TOPIC_PREFIX)
-    
-    coordinator = SunseekerCoordinator(hass, device_id, topic_prefix)
-    
-    # Subscribe to MQTT topic
-    await mqtt.async_subscribe(
-        hass, coordinator.response_topic, coordinator.handle_mqtt_message, qos=1
-    )
-    
+
+    # Extract MQTT configuration
+    mqtt_config = {
+        CONF_MQTT_HOST: entry.data[CONF_MQTT_HOST],
+        CONF_MQTT_PORT: entry.data[CONF_MQTT_PORT],
+        CONF_MQTT_USERNAME: entry.data.get(CONF_MQTT_USERNAME),
+        CONF_MQTT_PASSWORD: entry.data.get(CONF_MQTT_PASSWORD),
+    }
+
+    coordinator = SunseekerCoordinator(hass, device_id, mqtt_config, topic_prefix)
+
+    # Set up MQTT connection
+    await coordinator.async_setup()
+
     # Store coordinator
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    
+
     # Set up platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    
+
     # Register services
     await async_setup_services(hass, coordinator)
-    
+
     # Initial data fetch
     await coordinator.async_config_entry_first_refresh()
-    
+
     return True
 
 
@@ -152,9 +239,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator: SunseekerCoordinator = hass.data[DOMAIN][entry.entry_id]
-        
-        # Unsubscribe from MQTT
-        await mqtt.async_unsubscribe(hass, coordinator.response_topic)
+
+        # Shutdown MQTT connection
+        await coordinator.async_shutdown()
         
         hass.data[DOMAIN].pop(entry.entry_id)
         

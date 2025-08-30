@@ -3,11 +3,15 @@
     "step": {
       "user": {
         "title": "Set up Sunseeker Lawn Mower",
-        "description": "Enter your mower's device ID. You can find this by monitoring MQTT traffic on topics like {mqtt_example}",
+        "description": "Configure your Sunseeker lawn mower. Enter your mower's device ID (found by monitoring MQTT traffic on topics like /device/DEVICE_ID/update) and MQTT broker settings.",
         "data": {
           "name": "Name",
           "device_id": "Device ID",
-          "mqtt_topic_prefix": "MQTT Topic Prefix"
+          "mqtt_topic_prefix": "MQTT Topic Prefix",
+          "mqtt_host": "MQTT Broker Host",
+          "mqtt_port": "MQTT Broker Port",
+          "mqtt_username": "MQTT Username (optional)",
+          "mqtt_password": "MQTT Password (optional)"
         }
       }
     },

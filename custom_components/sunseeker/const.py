@@ -5,10 +5,16 @@ DOMAIN = "sunseeker"
 # Configuration keys
 CONF_DEVICE_ID = "device_id"
 CONF_MQTT_TOPIC_PREFIX = "mqtt_topic_prefix"
+CONF_MQTT_HOST = "mqtt_host"
+CONF_MQTT_PORT = "mqtt_port"
+CONF_MQTT_USERNAME = "mqtt_username"
+CONF_MQTT_PASSWORD = "mqtt_password"
 
 # Default values
 DEFAULT_NAME = "Sunseeker Lawn Mower"
 DEFAULT_TOPIC_PREFIX = "device"
+DEFAULT_MQTT_HOST = "192.168.5.2"
+DEFAULT_MQTT_PORT = 11883
 
 # MQTT Topics (will be formatted with device_id)
 TOPIC_COMMAND = "/{prefix}/{device_id}/get"
