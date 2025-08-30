@@ -22,8 +22,6 @@ from .const import (
     CONF_MQTT_TOPIC_PREFIX,
     CONF_MQTT_HOST,
     CONF_MQTT_PORT,
-    CONF_MQTT_USERNAME,
-    CONF_MQTT_PASSWORD,
     DEFAULT_TOPIC_PREFIX,
     TOPIC_COMMAND,
     TOPIC_RESPONSE,
@@ -83,13 +81,6 @@ class SunseekerCoordinator(DataUpdateCoordinator):
         self._mqtt_client.on_disconnect = self._on_mqtt_disconnect
         self._mqtt_client.on_message = self._on_mqtt_message
 
-        # Configure credentials if provided
-        if self._mqtt_config.get(CONF_MQTT_USERNAME):
-            self._mqtt_client.username_pw_set(
-                self._mqtt_config[CONF_MQTT_USERNAME],
-                self._mqtt_config.get(CONF_MQTT_PASSWORD, "")
-            )
-
         try:
             self._mqtt_client.connect(
                 self._mqtt_config[CONF_MQTT_HOST],
@@ -107,8 +98,11 @@ class SunseekerCoordinator(DataUpdateCoordinator):
             _LOGGER.info("Connected to MQTT broker for device %s", self.device_id)
             client.subscribe(self.response_topic, qos=1)
             self._connected = True
-            # Request initial status
-            self.hass.async_create_task(self._async_request_initial_status())
+            # Request initial status - properly schedule from MQTT thread
+            asyncio.run_coroutine_threadsafe(
+                self._async_request_initial_status(),
+                self.hass.loop
+            )
         else:
             _LOGGER.error("Failed to connect to MQTT broker, code: %s", rc)
             self._connected = False
@@ -120,8 +114,11 @@ class SunseekerCoordinator(DataUpdateCoordinator):
 
     def _on_mqtt_message(self, client, userdata, msg):
         """Handle MQTT message (runs in executor)."""
-        # Schedule handling in HA event loop
-        self.hass.async_create_task(self._async_handle_mqtt_message(msg))
+        # Schedule handling in HA event loop properly
+        asyncio.run_coroutine_threadsafe(
+            self._async_handle_mqtt_message(msg),
+            self.hass.loop
+        )
 
     async def _async_handle_mqtt_message(self, msg) -> None:
         """Handle MQTT message in HA event loop."""
@@ -211,8 +208,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     mqtt_config = {
         CONF_MQTT_HOST: entry.data[CONF_MQTT_HOST],
         CONF_MQTT_PORT: entry.data[CONF_MQTT_PORT],
-        CONF_MQTT_USERNAME: entry.data.get(CONF_MQTT_USERNAME),
-        CONF_MQTT_PASSWORD: entry.data.get(CONF_MQTT_PASSWORD),
     }
 
     coordinator = SunseekerCoordinator(hass, device_id, mqtt_config, topic_prefix)

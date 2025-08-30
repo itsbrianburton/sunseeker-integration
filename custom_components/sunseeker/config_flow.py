@@ -18,8 +18,6 @@ from .const import (
     CONF_MQTT_TOPIC_PREFIX,
     CONF_MQTT_HOST,
     CONF_MQTT_PORT,
-    CONF_MQTT_USERNAME,
-    CONF_MQTT_PASSWORD,
     DEFAULT_NAME,
     DEFAULT_TOPIC_PREFIX,
     DEFAULT_MQTT_HOST,
@@ -35,8 +33,6 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_MQTT_TOPIC_PREFIX, default=DEFAULT_TOPIC_PREFIX): str,
         vol.Required(CONF_MQTT_HOST, default=DEFAULT_MQTT_HOST): str,
         vol.Required(CONF_MQTT_PORT, default=DEFAULT_MQTT_PORT): int,
-        vol.Optional(CONF_MQTT_USERNAME): str,
-        vol.Optional(CONF_MQTT_PASSWORD): str,
     }
 )
 
