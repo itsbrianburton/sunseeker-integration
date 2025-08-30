@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Sunseeker Lawn Mower",
+        "description": "Enter your mower's device ID. You can find this by monitoring MQTT traffic on topics like {mqtt_example}",
+        "data": {
+          "name": "Name",
+          "device_id": "Device ID",
+          "mqtt_topic_prefix": "MQTT Topic Prefix"
+        }
+      }
+    },
+    "error": {
+      "invalid_device_id": "Device ID cannot be empty",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  }
+}

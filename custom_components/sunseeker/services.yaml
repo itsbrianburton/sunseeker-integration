@@ -1,0 +1,91 @@
+set_schedule:
+  name: Set Cutting Schedule
+  description: Set the weekly cutting schedule for the lawn mower
+  fields:
+    auto:
+      name: Auto Mode
+      description: Enable automatic scheduling
+      required: false
+      default: false
+      selector:
+        boolean:
+    pause:
+      name: Pause
+      description: Pause the schedule
+      required: false
+      default: false
+      selector:
+        boolean:
+    monday:
+      name: Monday Schedule
+      description: Schedule for Monday
+      required: false
+      selector:
+        object:
+      example:
+        slots:
+          - start: 600  # 10:00 AM (minutes from midnight)
+            end: 1080   # 6:00 PM
+        trimming: true
+    tuesday:
+      name: Tuesday Schedule
+      description: Schedule for Tuesday
+      required: false
+      selector:
+        object:
+    wednesday:
+      name: Wednesday Schedule
+      description: Schedule for Wednesday
+      required: false
+      selector:
+        object:
+    thursday:
+      name: Thursday Schedule
+      description: Schedule for Thursday
+      required: false
+      selector:
+        object:
+    friday:
+      name: Friday Schedule
+      description: Schedule for Friday
+      required: false
+      selector:
+        object:
+    saturday:
+      name: Saturday Schedule
+      description: Schedule for Saturday
+      required: false
+      selector:
+        object:
+    sunday:
+      name: Sunday Schedule
+      description: Schedule for Sunday
+      required: false
+      selector:
+        object:
+
+set_rain_delay:
+  name: Set Rain Delay
+  description: Configure rain delay settings
+  fields:
+    enabled:
+      name: Rain Delay Enabled
+      description: Enable or disable rain delay
+      required: false
+      default: true
+      selector:
+        boolean:
+    delay_minutes:
+      name: Delay Duration
+      description: Delay duration in minutes after rain stops
+      required: false
+      default: 180
+      selector:
+        number:
+          min: 0
+          max: 1440
+          unit_of_measurement: minutes
+
+edge_cut:
+  name: Start Edge Cutting
+  description: Start edge cutting mode

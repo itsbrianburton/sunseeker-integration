@@ -1,0 +1,13 @@
+{
+  "domain": "sunseeker",
+  "name": "Sunseeker Lawn Mower Integration for Local MQTT Brokers",
+  "codeowners": ["@itsbrianburton"],
+  "config_flow": true,
+  "dependencies": ["mqtt"],
+  "documentation": "https://github.com/itsbrianburton/sunseeker-integration",
+  "issue_tracker": "https://github.com/itsbrianburton/sunseeker-integration/issues",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "1.0.0"
+}
