@@ -239,13 +239,39 @@ class SunseekerCoordinator(DataUpdateCoordinator):
 
     async def async_shutdown(self) -> None:
         """Shutdown MQTT connection."""
+        _LOGGER.info("Shutting down MQTT connection for device %s", self.device_id)
+
         if self._mqtt_client:
-            await self.hass.async_add_executor_job(self._mqtt_client.loop_stop)
-            await self.hass.async_add_executor_job(self._mqtt_client.disconnect)
+            try:
+                # Mark as not connected first
+                self._connected = False
+
+                # Stop the MQTT loop
+                await self.hass.async_add_executor_job(self._mqtt_client.loop_stop)
+                _LOGGER.debug("MQTT loop stopped for device %s", self.device_id)
+
+                # Disconnect
+                await self.hass.async_add_executor_job(self._mqtt_client.disconnect)
+                _LOGGER.debug("MQTT client disconnected for device %s", self.device_id)
+
+                # Clear the client reference
+                self._mqtt_client = None
+
+            except Exception as err:
+                _LOGGER.error("Error during MQTT shutdown for device %s: %s", self.device_id, err)
+        else:
+            _LOGGER.debug("No MQTT client to shutdown for device %s", self.device_id)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Sunseeker from a config entry."""
+    _LOGGER.info("Setting up Sunseeker integration for entry %s", entry.entry_id)
+
+    # Check if entry is already set up
+    if entry.entry_id in hass.data.get(DOMAIN, {}):
+        _LOGGER.warning("Entry %s already exists, cleaning up first", entry.entry_id)
+        await async_unload_entry(hass, entry)
+
     device_id = entry.data[CONF_DEVICE_ID]
     topic_prefix = DEFAULT_TOPIC_PREFIX  # Always use "device"
 
@@ -258,45 +284,98 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = SunseekerCoordinator(hass, device_id, mqtt_config, topic_prefix)
 
     # Set up MQTT connection
-    await coordinator.async_setup()
+    try:
+        await coordinator.async_setup()
+    except Exception as err:
+        _LOGGER.error("Failed to set up MQTT connection: %s", err)
+        return False
 
     # Store coordinator
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 
     # Set up platforms
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        _LOGGER.info("Successfully set up platforms for entry %s", entry.entry_id)
+    except Exception as err:
+        _LOGGER.error("Failed to set up platforms: %s", err)
+        # Clean up coordinator if platform setup fails
+        await coordinator.async_shutdown()
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        return False
 
-    # Register services
-    await async_setup_services(hass, coordinator)
+    # Register services (only once globally)
+    if len(hass.data[DOMAIN]) == 1:  # First integration entry
+        try:
+            await async_setup_services(hass, coordinator)
+            _LOGGER.info("Services registered for Sunseeker integration")
+        except Exception as err:
+            _LOGGER.error("Failed to set up services: %s", err)
 
     # Initial data fetch
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await coordinator.async_config_entry_first_refresh()
+        _LOGGER.info("Initial data refresh completed for entry %s", entry.entry_id)
+    except Exception as err:
+        _LOGGER.warning("Initial data refresh failed: %s", err)
+        # Don't fail setup just because initial refresh failed
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        coordinator: SunseekerCoordinator = hass.data[DOMAIN][entry.entry_id]
+    _LOGGER.info("Unloading Sunseeker integration for entry %s", entry.entry_id)
 
-        # Shutdown MQTT connection
-        await coordinator.async_shutdown()
-        
-        hass.data[DOMAIN].pop(entry.entry_id)
-        
+    # Get coordinator if it exists
+    coordinator: SunseekerCoordinator | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+
+    # Unload platforms first
+    unload_ok = True
+    try:
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+        if unload_ok:
+            _LOGGER.info("Successfully unloaded platforms for entry %s", entry.entry_id)
+        else:
+            _LOGGER.warning("Failed to unload some platforms for entry %s", entry.entry_id)
+    except Exception as err:
+        _LOGGER.error("Error unloading platforms: %s", err)
+        unload_ok = False
+
+    # Shutdown coordinator if it exists
+    if coordinator:
+        try:
+            await coordinator.async_shutdown()
+            _LOGGER.info("Coordinator shut down for entry %s", entry.entry_id)
+        except Exception as err:
+            _LOGGER.error("Error shutting down coordinator: %s", err)
+
+    # Remove from hass.data
+    if DOMAIN in hass.data:
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+
         # Remove services if this was the last entry
         if not hass.data[DOMAIN]:
-            hass.services.async_remove(DOMAIN, SERVICE_SET_SCHEDULE)
-            hass.services.async_remove(DOMAIN, SERVICE_SET_RAIN_DELAY)
-            hass.services.async_remove(DOMAIN, SERVICE_EDGE_CUT)
-    
+            try:
+                hass.services.async_remove(DOMAIN, SERVICE_SET_SCHEDULE)
+                hass.services.async_remove(DOMAIN, SERVICE_SET_RAIN_DELAY)
+                hass.services.async_remove(DOMAIN, SERVICE_EDGE_CUT)
+                _LOGGER.info("Services removed for Sunseeker integration")
+            except Exception as err:
+                _LOGGER.error("Error removing services: %s", err)
+
+    _LOGGER.info("Unload completed for entry %s, success: %s", entry.entry_id, unload_ok)
     return unload_ok
 
 
 async def async_setup_services(hass: HomeAssistant, coordinator: SunseekerCoordinator) -> None:
     """Set up services for the integration."""
-    
+
+    # Check if services are already registered
+    if hass.services.has_service(DOMAIN, SERVICE_SET_SCHEDULE):
+        _LOGGER.debug("Services already registered, skipping")
+        return
+
     async def set_schedule_service(call: ServiceCall) -> None:
         """Set cutting schedule service."""
         schedule_data = {
@@ -304,7 +383,7 @@ async def async_setup_services(hass: HomeAssistant, coordinator: SunseekerCoordi
             "auto": call.data.get("auto", False),
             "pause": call.data.get("pause", False),
         }
-        
+
         # Add schedule for each day
         days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
         for day in days:
@@ -322,9 +401,9 @@ async def async_setup_services(hass: HomeAssistant, coordinator: SunseekerCoordi
                 }
             else:
                 schedule_data[day] = {}
-        
+
         await coordinator.async_send_command(schedule_data)
-    
+
     async def set_rain_delay_service(call: ServiceCall) -> None:
         """Set rain delay service."""
         command = {
@@ -333,19 +412,24 @@ async def async_setup_services(hass: HomeAssistant, coordinator: SunseekerCoordi
             "rain_delay_set": call.data.get("delay_minutes", 180),
         }
         await coordinator.async_send_command(command)
-    
+
     async def edge_cut_service(call: ServiceCall) -> None:
         """Start edge cutting service."""
         command = {"cmd": 101, "mode": 4}
         await coordinator.async_send_command(command)
-    
+
     # Register services
-    hass.services.async_register(
-        DOMAIN, SERVICE_SET_SCHEDULE, set_schedule_service
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_SET_RAIN_DELAY, set_rain_delay_service
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_EDGE_CUT, edge_cut_service
-    )
+    try:
+        hass.services.async_register(
+            DOMAIN, SERVICE_SET_SCHEDULE, set_schedule_service
+        )
+        hass.services.async_register(
+            DOMAIN, SERVICE_SET_RAIN_DELAY, set_rain_delay_service
+        )
+        hass.services.async_register(
+            DOMAIN, SERVICE_EDGE_CUT, edge_cut_service
+        )
+        _LOGGER.info("Successfully registered services for Sunseeker integration")
+    except Exception as err:
+        _LOGGER.error("Failed to register services: %s", err)
+        raise

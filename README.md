@@ -68,7 +68,7 @@ Then restart your firewall:
 
 ### Test the Changes
 1. Turn your lawn mower off then back on.
-2. SSH into your MQTT server and monitor the traffic with the command: `mosquitto_sub -h MQTT_SERVER_IP -t '#' -v`
+2. SSH into your MQTT server and monitor the traffic with the command: `mosquitto_sub -h MQTT_SERVER_IP -t "/device/+/update" -v`
 3. If you see messages from the mower, that means it's working.
 
 ## Installation
