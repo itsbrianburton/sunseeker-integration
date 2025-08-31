@@ -82,6 +82,13 @@ SENSOR_TYPES = {
         "unit_of_measurement": "bars",
         "state_class": "measurement",
     },
+    "rain_status": {
+        "name": "Rain Status",
+        "icon": "mdi:weather-rainy",
+        "device_class": None,
+        "unit_of_measurement": None,
+        "state_class": None,
+    },
 }
 
 # Device info

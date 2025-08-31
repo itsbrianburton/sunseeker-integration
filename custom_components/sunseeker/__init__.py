@@ -19,14 +19,15 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from .const import (
     DOMAIN,
     CONF_DEVICE_ID,
-    CONF_MQTT_TOPIC_PREFIX,
     CONF_MQTT_HOST,
     CONF_MQTT_PORT,
     DEFAULT_TOPIC_PREFIX,
     TOPIC_COMMAND,
     TOPIC_RESPONSE,
     CMD_STATUS_UPDATE,
+    CMD_RAIN_DELAY,
     RESP_ROBOT_STATUS,
+    RESP_RAIN_STATUS,
     STATUS_UPDATE_INTERVAL,
     DEVICE_MANUFACTURER,
     SERVICE_SET_SCHEDULE,
@@ -66,22 +67,31 @@ class SunseekerCoordinator(DataUpdateCoordinator):
         )
         self._device_info: DeviceInfo | None = None
         self._status_data = {}
+        self._rain_data = {}
         self._mqtt_config = mqtt_config
         self._mqtt_client: mqtt.Client | None = None
         self._connected = False
 
     async def async_setup(self) -> None:
         """Set up MQTT connection."""
+        _LOGGER.info("Setting up MQTT connection for device %s", self.device_id)
         await self.hass.async_add_executor_job(self._setup_mqtt)
 
     def _setup_mqtt(self) -> None:
         """Set up MQTT client (runs in executor)."""
+        _LOGGER.info("Creating MQTT client for %s:%s",
+                     self._mqtt_config[CONF_MQTT_HOST],
+                     self._mqtt_config[CONF_MQTT_PORT])
+
         self._mqtt_client = mqtt.Client()
         self._mqtt_client.on_connect = self._on_mqtt_connect
         self._mqtt_client.on_disconnect = self._on_mqtt_disconnect
         self._mqtt_client.on_message = self._on_mqtt_message
 
         try:
+            _LOGGER.info("Connecting to MQTT broker %s:%s",
+                         self._mqtt_config[CONF_MQTT_HOST],
+                         self._mqtt_config[CONF_MQTT_PORT])
             self._mqtt_client.connect(
                 self._mqtt_config[CONF_MQTT_HOST],
                 self._mqtt_config[CONF_MQTT_PORT],
@@ -96,9 +106,11 @@ class SunseekerCoordinator(DataUpdateCoordinator):
         """Handle MQTT connection."""
         if rc == 0:
             _LOGGER.info("Connected to MQTT broker for device %s", self.device_id)
+            _LOGGER.info("Subscribing to topic: %s", self.response_topic)
             client.subscribe(self.response_topic, qos=1)
             self._connected = True
             # Request initial status - properly schedule from MQTT thread
+            _LOGGER.info("Scheduling initial status request for device %s", self.device_id)
             asyncio.run_coroutine_threadsafe(
                 self._async_request_initial_status(),
                 self.hass.loop
@@ -123,17 +135,35 @@ class SunseekerCoordinator(DataUpdateCoordinator):
     async def _async_handle_mqtt_message(self, msg) -> None:
         """Handle MQTT message in HA event loop."""
         try:
-            data = json.loads(msg.payload.decode())
-            _LOGGER.debug("Received from mower: %s", data)
+            payload = msg.payload.decode()
+            _LOGGER.debug("Raw MQTT message from %s: %s", msg.topic, payload)
+
+            data = json.loads(payload)
+            _LOGGER.info("Received from mower: cmd=%s, data=%s", data.get("cmd"), data)
 
             # Handle status response
             if data.get("cmd") == RESP_ROBOT_STATUS:
+                _LOGGER.info("Processing robot status response for device %s", self.device_id)
                 self._status_data = data
-                self.async_set_updated_data(data)
+                combined_data = {**self._status_data, **self._rain_data}
+                _LOGGER.debug("Combined data after status update: %s", combined_data)
+                self.async_set_updated_data(combined_data)
 
                 # Update device info if we don't have it yet
                 if self._device_info is None:
+                    _LOGGER.info("Setting up device info for device %s", self.device_id)
                     self._update_device_info(data)
+
+            # Handle rain status response
+            elif data.get("cmd") == RESP_RAIN_STATUS:
+                _LOGGER.info("Processing rain status response for device %s", self.device_id)
+                self._rain_data = data
+                combined_data = {**self._status_data, **self._rain_data}
+                _LOGGER.debug("Combined data after rain status update: %s", combined_data)
+                self.async_set_updated_data(combined_data)
+
+            else:
+                _LOGGER.debug("Ignoring message with cmd=%s", data.get("cmd"))
 
         except json.JSONDecodeError:
             _LOGGER.error("Invalid JSON from mower: %s", msg.payload)
@@ -144,17 +174,32 @@ class SunseekerCoordinator(DataUpdateCoordinator):
         """Request initial status after connection."""
         await asyncio.sleep(1)  # Give connection time to stabilize
         await self.async_send_command(CMD_STATUS_UPDATE)
+        await asyncio.sleep(0.5)  # Brief delay between commands
+        await self.async_send_command(CMD_RAIN_DELAY)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the mower."""
+        _LOGGER.debug("Starting data update for device %s", self.device_id)
+
         if not self._connected:
+            _LOGGER.warning("MQTT not connected for device %s", self.device_id)
             raise UpdateFailed("MQTT not connected")
 
         try:
-            # Request status update
+            # Request status update and rain status
+            _LOGGER.debug("Sending status update command to device %s", self.device_id)
             await self.async_send_command(CMD_STATUS_UPDATE)
-            return self._status_data
+            await asyncio.sleep(0.5)  # Brief delay between commands
+            _LOGGER.debug("Sending rain delay command to device %s", self.device_id)
+            await self.async_send_command(CMD_RAIN_DELAY)
+
+            # Combine status and rain data
+            combined_data = {**self._status_data, **self._rain_data}
+            _LOGGER.debug("Data update complete for device %s, data: %s",
+                         self.device_id, combined_data)
+            return combined_data
         except Exception as err:
+            _LOGGER.error("Error communicating with mower %s: %s", self.device_id, err)
             raise UpdateFailed(f"Error communicating with mower: {err}")
 
     async def async_send_command(self, command: dict[str, Any]) -> None:
@@ -202,7 +247,7 @@ class SunseekerCoordinator(DataUpdateCoordinator):
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Sunseeker from a config entry."""
     device_id = entry.data[CONF_DEVICE_ID]
-    topic_prefix = entry.data.get(CONF_MQTT_TOPIC_PREFIX, DEFAULT_TOPIC_PREFIX)
+    topic_prefix = DEFAULT_TOPIC_PREFIX  # Always use "device"
 
     # Extract MQTT configuration
     mqtt_config = {

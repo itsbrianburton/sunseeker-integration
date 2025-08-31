@@ -7,7 +7,6 @@
         "data": {
           "name": "Name",
           "device_id": "Lawn Mower's Device ID",
-          "mqtt_topic_prefix": "MQTT Topic Prefix",
           "mqtt_host": "MQTT Broker Host",
           "mqtt_port": "MQTT Broker Port"
         }

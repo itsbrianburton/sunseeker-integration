@@ -90,30 +90,62 @@ class SunseekerSensor(CoordinatorEntity[SunseekerCoordinator], SensorEntity):
         return (
             self.coordinator.last_update_success 
             and self.coordinator.data is not None
-            and self.native_value is not None
         )
 
     @property
     def native_value(self) -> Any:
         """Return the state of the sensor."""
         if not self.coordinator.data:
+            _LOGGER.debug("No data available for sensor %s", self._attr_unique_id)
             return None
-            
+
         data = self.coordinator.data
-        
+        _LOGGER.debug("Getting value for sensor %s, data available: %s",
+                     self._sensor_type, bool(data))
+
         if self._sensor_type == "battery":
-            return data.get("power")
+            value = data.get("power")
+            _LOGGER.debug("Battery sensor value: %s", value)
+            return value
         elif self._sensor_type == "area_covered":
-            return data.get("on_area")
+            value = data.get("on_area")
+            _LOGGER.debug("Area covered sensor value: %s", value)
+            return value
         elif self._sensor_type == "current_area":
-            return data.get("cur_area")
+            value = data.get("cur_area")
+            _LOGGER.debug("Current area sensor value: %s", value)
+            return value
         elif self._sensor_type == "runtime_current":
-            return data.get("cur_min")
+            value = data.get("cur_min")
+            _LOGGER.debug("Current runtime sensor value: %s", value)
+            return value
         elif self._sensor_type == "runtime_total":
-            return data.get("total_min")
+            value = data.get("total_min")
+            _LOGGER.debug("Total runtime sensor value: %s", value)
+            return value
         elif self._sensor_type == "wifi_signal":
-            return data.get("wifi_lv")
-        
+            value = data.get("wifi_lv")
+            _LOGGER.debug("WiFi signal sensor value: %s", value)
+            return value
+        elif self._sensor_type == "rain_status":
+            rain_status = data.get("rain_status", 0)
+            rain_enabled = data.get("rain_en", False)
+            rain_delay_left = data.get("rain_delay_left", 0)
+
+            if not rain_enabled:
+                value = "disabled"
+            elif rain_status == 1:
+                value = "raining"
+            elif rain_delay_left > 0:
+                value = "delayed"
+            else:
+                value = "clear"
+
+            _LOGGER.debug("Rain status sensor value: %s (status=%s, enabled=%s, delay_left=%s)",
+                         value, rain_status, rain_enabled, rain_delay_left)
+            return value
+
+        _LOGGER.warning("Unknown sensor type: %s", self._sensor_type)
         return None
 
     @property
@@ -121,11 +153,21 @@ class SunseekerSensor(CoordinatorEntity[SunseekerCoordinator], SensorEntity):
         """Return additional state attributes."""
         if not self.coordinator.data:
             return None
-            
+
         # Add some common attributes for all sensors
         data = self.coordinator.data
-        return {
+        attributes = {
             "station": data.get("station", False),
             "mode": data.get("mode", 0),
-            "last_updated": self.coordinator.last_update_success_time,
         }
+
+        # Add specific attributes for rain status sensor
+        if self._sensor_type == "rain_status":
+            attributes.update({
+                "rain_enabled": data.get("rain_en", False),
+                "rain_delay_set_minutes": data.get("rain_delay_set", 0),
+                "rain_delay_left_minutes": data.get("rain_delay_left", 0),
+                "raw_rain_status": data.get("rain_status", 0),
+            })
+
+        return attributes
