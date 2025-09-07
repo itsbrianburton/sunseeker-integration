@@ -1,10 +1,15 @@
 # Sunseeker Lawn Mower Home Assistant Integration
 
-Sunseeker lawn mowers are low-cost, white labeled robot lawn mowers sold under a variety of brand names.  One big negative of these lawnmowers is that it communicates with an unsecure public MQTT broker and transmits personal information including your Wifi SSID with plaintext password.
+## What is This?
+Sunseeker lawn mowers are low-cost, white labeled robot lawn mowers sold under a variety of brand names.  One big negative of these lawnmowers is that it communicates with an unsecure public MQTT broker and transmits personal information including your Wifi SSID with plaintext password, exposing your lawn mower and network to the whole world.
 
-This integration was built for my own needs because I redirected all MQTT traffic from my lawn mower to a local MQTT broker.  This integration monitors the MQTT traffic and updates various sensor entity states.
+This integration is designed to integrate with a Sunseeker lawn mower **LOCALLY** and completely blocking its internet access.
 
-**Note: This is not a simple integration!**  In order to use this integration you must redirect your Sunseeker's MQTT traffic to a local MQTT broker.
+## Who is This For?
+There is already a mature [Sunseeker integration](https://github.com/Sdahl1234/Sunseeker-lawn-mower) available for Home Assistant that will work for most of you. This integration is only for those who want to operate their lawn mower locally and remove all cloud connectivity.
+
+**This is not a simple drop-in integration!**  In order to use this integration you must redirect your Sunseeker's MQTT traffic to a local MQTT broker.  If you don't have a configurable firewall that allows you to create a custom NAT, **you cannot use this.**
+
 
 ## Requirements
 1. Configurable firewall, preferably iptables.

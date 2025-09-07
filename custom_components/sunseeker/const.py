@@ -23,14 +23,15 @@ CMD_STOP = {"cmd": 101, "mode": 0}
 CMD_START_MOWING = {"cmd": 101, "mode": 1}
 CMD_RETURN_DOCK = {"cmd": 101, "mode": 2}
 CMD_EDGE_CUTTING = {"cmd": 101, "mode": 4}
-CMD_STATUS_UPDATE = {"cmd": 200}
-CMD_ROBOT_STATUS = {"cmd": 201}
+CMD_STATUS_UPDATE = {"cmd": 200}  # Update Robot Status
+CMD_ROBOT_STATUS = {"cmd": 201}   # Query Robot Status (alternative)
 CMD_ROBOT_NAME = {"cmd": 202}
 CMD_CUTTING_SCHEDULE = {"cmd": 203}
 CMD_RAIN_DELAY = {"cmd": 205}
 
 # Response command codes
 RESP_ROBOT_STATUS = 501
+RESP_ROBOT_STATUS_ALT = 500  # Alternative status response (some mower variants)
 RESP_ROBOT_NAME = 502
 RESP_CUTTING_SCHEDULE = 503
 RESP_RAIN_STATUS = 505
@@ -101,6 +102,7 @@ DEVICE_MODEL_MAP = {
 SERVICE_SET_SCHEDULE = "set_schedule"
 SERVICE_SET_RAIN_DELAY = "set_rain_delay"
 SERVICE_EDGE_CUT = "edge_cut"
+SERVICE_TEST_DOCK = "test_dock"
 
 # Update intervals
 STATUS_UPDATE_INTERVAL = 30  # seconds

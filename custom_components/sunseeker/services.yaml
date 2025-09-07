@@ -89,3 +89,24 @@ set_rain_delay:
 edge_cut:
   name: Start Edge Cutting
   description: Start edge cutting mode
+
+test_dock:
+  name: Test Dock Command
+  description: Test different approaches to dock the mower
+  fields:
+    approach:
+      name: Dock Approach
+      description: Which docking approach to test
+      required: false
+      default: "default"
+      selector:
+        select:
+          options:
+            - value: "default"
+              label: "Default (mode 2)"
+            - value: "direct_dock"
+              label: "Direct dock command"
+            - value: "stop_then_dock"
+              label: "Stop first, then dock"
+            - value: "mode_3"
+              label: "Try mode 3 (alternative)"

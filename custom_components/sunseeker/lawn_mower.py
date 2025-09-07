@@ -1,6 +1,7 @@
 """Sunseeker lawn mower entity."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -17,7 +18,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import SunseekerCoordinator
 from .const import (
-    DOMAIN,
+    CMD_EDGE_CUTTING, DOMAIN,
     CONF_DEVICE_ID,
     CMD_STOP,
     CMD_START_MOWING,
@@ -35,7 +36,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up Sunseeker lawn mower from a config entry."""
     coordinator: SunseekerCoordinator = hass.data[DOMAIN][config_entry.entry_id]
-    
+
     async_add_entities([
         SunseekerLawnMower(
             coordinator,
@@ -76,17 +77,17 @@ class SunseekerLawnMower(CoordinatorEntity[SunseekerCoordinator], LawnMowerEntit
         """Return the current activity."""
         if not self.coordinator.data:
             return None
-            
+
         data = self.coordinator.data
         mode = data.get("mode", 0)
         station = data.get("station", False)
-        
+
         if station:
             return LawnMowerActivity.DOCKED
-        
+
         # Map Sunseeker modes to HA activities
         sunseeker_state = MODE_TO_STATE.get(mode, "paused")
-        
+
         if sunseeker_state == "mowing":
             return LawnMowerActivity.MOWING
         elif sunseeker_state == "docked":
@@ -106,7 +107,7 @@ class SunseekerLawnMower(CoordinatorEntity[SunseekerCoordinator], LawnMowerEntit
         """Return additional state attributes."""
         if not self.coordinator.data:
             return None
-            
+
         data = self.coordinator.data
         return {
             "power": data.get("power", 0),
@@ -127,6 +128,13 @@ class SunseekerLawnMower(CoordinatorEntity[SunseekerCoordinator], LawnMowerEntit
         # Refresh after a short delay to get updated status
         await self.coordinator.async_request_refresh()
 
+    async def async_start_edging(self) -> None:
+        """Start mowing."""
+        _LOGGER.debug("Starting edge mowing for %s", self._device_id)
+        await self.coordinator.async_send_command(CMD_EDGE_CUTTING)
+        # Refresh after a short delay to get updated status
+        await self.coordinator.async_request_refresh()
+
     async def async_pause(self) -> None:
         """Pause mowing."""
         _LOGGER.debug("Pausing mowing for %s", self._device_id)
@@ -136,5 +144,14 @@ class SunseekerLawnMower(CoordinatorEntity[SunseekerCoordinator], LawnMowerEntit
     async def async_dock(self) -> None:
         """Dock the mower."""
         _LOGGER.debug("Docking mower %s", self._device_id)
+
+        # Some mowers need to be stopped before docking
+        current_mode = self.coordinator.data.get("mode", 0) if self.coordinator.data else 0
+
+        if current_mode == 1:  # Currently mowing
+            _LOGGER.info("Mower is currently mowing, stopping first before docking")
+            await self.coordinator.async_send_command(CMD_STOP)
+            await asyncio.sleep(2)  # Give mower time to stop
+
         await self.coordinator.async_send_command(CMD_RETURN_DOCK)
         await self.coordinator.async_request_refresh()

@@ -27,12 +27,14 @@ from .const import (
     CMD_STATUS_UPDATE,
     CMD_RAIN_DELAY,
     RESP_ROBOT_STATUS,
+    RESP_ROBOT_STATUS_ALT,
     RESP_RAIN_STATUS,
     STATUS_UPDATE_INTERVAL,
     DEVICE_MANUFACTURER,
     SERVICE_SET_SCHEDULE,
     SERVICE_SET_RAIN_DELAY,
     SERVICE_EDGE_CUT,
+    SERVICE_TEST_DOCK,
 )
 
 PLATFORMS: list[Platform] = [Platform.LAWN_MOWER, Platform.SENSOR]
@@ -141,10 +143,45 @@ class SunseekerCoordinator(DataUpdateCoordinator):
             data = json.loads(payload)
             _LOGGER.info("Received from mower: cmd=%s, data=%s", data.get("cmd"), data)
 
-            # Handle status response
-            if data.get("cmd") == RESP_ROBOT_STATUS:
-                _LOGGER.info("Processing robot status response for device %s", self.device_id)
+            # Handle command acknowledgment (cmd=400)
+            if data.get("cmd") == 400:
+                command = data.get("command")
+                result = data.get("result")
+                _LOGGER.info("Command %s acknowledgment: %s", command, "SUCCESS" if result else "FAILED")
+
+                # Special logging for dock commands
+                if command == 101:
+                    _LOGGER.info("Dock/movement command acknowledged, checking if mower will comply...")
+
+                return  # Don't process cmd=400 as regular data
+
+            # Handle status response (cmd=500 or cmd=501)
+            elif data.get("cmd") in [RESP_ROBOT_STATUS, RESP_ROBOT_STATUS_ALT]:
+                _LOGGER.info("Processing robot status response (cmd=%s) for device %s",
+                           data.get("cmd"), self.device_id)
+
+                # Log mode changes
+                old_mode = self._status_data.get("mode") if self._status_data else None
+                new_mode = data.get("mode")
+                if old_mode != new_mode:
+                    mode_names = {0: "stopped", 1: "mowing", 2: "docking/docked", 4: "edge cutting"}
+                    _LOGGER.info("Mower mode changed: %s -> %s",
+                               mode_names.get(old_mode, old_mode),
+                               mode_names.get(new_mode, new_mode))
+
                 self._status_data = data
+
+                # Check if this response also contains rain data (like cmd=500)
+                if "rain_en" in data:
+                    _LOGGER.info("Status response includes rain data, updating both")
+                    self._rain_data = {
+                        "cmd": data.get("cmd"),
+                        "rain_en": data.get("rain_en"),
+                        "rain_status": data.get("rain_status"),
+                        "rain_delay_set": data.get("rain_delay_set"),
+                        "rain_delay_left": data.get("rain_delay_left"),
+                    }
+
                 combined_data = {**self._status_data, **self._rain_data}
                 _LOGGER.debug("Combined data after status update: %s", combined_data)
                 self.async_set_updated_data(combined_data)
@@ -154,7 +191,7 @@ class SunseekerCoordinator(DataUpdateCoordinator):
                     _LOGGER.info("Setting up device info for device %s", self.device_id)
                     self._update_device_info(data)
 
-            # Handle rain status response
+            # Handle rain status response (cmd=505) - only if not already handled above
             elif data.get("cmd") == RESP_RAIN_STATUS:
                 _LOGGER.info("Processing rain status response for device %s", self.device_id)
                 self._rain_data = data
@@ -173,9 +210,16 @@ class SunseekerCoordinator(DataUpdateCoordinator):
     async def _async_request_initial_status(self) -> None:
         """Request initial status after connection."""
         await asyncio.sleep(1)  # Give connection time to stabilize
+        _LOGGER.info("Requesting initial status for device %s", self.device_id)
         await self.async_send_command(CMD_STATUS_UPDATE)
-        await asyncio.sleep(0.5)  # Brief delay between commands
-        await self.async_send_command(CMD_RAIN_DELAY)
+
+        # Wait and see if we get both status and rain data in one response
+        await asyncio.sleep(1.0)
+
+        # If status didn't include rain data, request it separately
+        if "rain_en" not in self._status_data:
+            _LOGGER.info("Requesting rain status separately for device %s", self.device_id)
+            await self.async_send_command(CMD_RAIN_DELAY)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the mower."""
@@ -186,17 +230,43 @@ class SunseekerCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("MQTT not connected")
 
         try:
-            # Request status update and rain status
-            _LOGGER.debug("Sending status update command to device %s", self.device_id)
+            # Clear previous data to detect what we receive
+            old_status_data = self._status_data.copy()
+            old_rain_data = self._rain_data.copy()
+
+            # Request status update - this might include rain data too (cmd=500)
+            _LOGGER.info("Sending status update command (cmd: 200) to device %s", self.device_id)
             await self.async_send_command(CMD_STATUS_UPDATE)
-            await asyncio.sleep(0.5)  # Brief delay between commands
-            _LOGGER.debug("Sending rain delay command to device %s", self.device_id)
-            await self.async_send_command(CMD_RAIN_DELAY)
+
+            # Wait for response
+            await asyncio.sleep(1.0)
+
+            # Check if we got status data
+            status_received = self._status_data != old_status_data
+            rain_in_status = "rain_en" in self._status_data
+
+            if status_received:
+                _LOGGER.info("Received status data with %d fields", len(self._status_data))
+                if rain_in_status:
+                    _LOGGER.info("Status response includes rain data - no separate rain query needed")
+                else:
+                    # Send separate rain delay command if not included in status
+                    _LOGGER.info("Sending rain delay command (cmd: 205) to device %s", self.device_id)
+                    await self.async_send_command(CMD_RAIN_DELAY)
+                    await asyncio.sleep(0.5)
+            else:
+                _LOGGER.warning("No robot status response received for device %s", self.device_id)
+                _LOGGER.warning("Battery, area, and runtime sensors will show 'Unknown'")
+
+                # Try rain command anyway
+                _LOGGER.info("Sending rain delay command (cmd: 205) to device %s", self.device_id)
+                await self.async_send_command(CMD_RAIN_DELAY)
+                await asyncio.sleep(0.5)
 
             # Combine status and rain data
             combined_data = {**self._status_data, **self._rain_data}
-            _LOGGER.debug("Data update complete for device %s, data: %s",
-                         self.device_id, combined_data)
+            _LOGGER.info("Data update complete for device %s, total_fields=%d",
+                         self.device_id, len(combined_data))
             return combined_data
         except Exception as err:
             _LOGGER.error("Error communicating with mower %s: %s", self.device_id, err)
@@ -216,7 +286,7 @@ class SunseekerCoordinator(DataUpdateCoordinator):
                 1,  # QoS
                 False  # Retain
             )
-            _LOGGER.debug("Sent command to %s: %s", self.command_topic, payload)
+            _LOGGER.info("Sent command to %s: %s", self.command_topic, payload)
         except Exception as err:
             _LOGGER.error("Failed to send command: %s", err)
             raise
@@ -360,6 +430,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.services.async_remove(DOMAIN, SERVICE_SET_SCHEDULE)
                 hass.services.async_remove(DOMAIN, SERVICE_SET_RAIN_DELAY)
                 hass.services.async_remove(DOMAIN, SERVICE_EDGE_CUT)
+                hass.services.async_remove(DOMAIN, SERVICE_TEST_DOCK)
                 _LOGGER.info("Services removed for Sunseeker integration")
             except Exception as err:
                 _LOGGER.error("Error removing services: %s", err)
@@ -418,6 +489,25 @@ async def async_setup_services(hass: HomeAssistant, coordinator: SunseekerCoordi
         command = {"cmd": 101, "mode": 4}
         await coordinator.async_send_command(command)
 
+    async def test_dock_service(call: ServiceCall) -> None:
+        """Test different dock commands."""
+        approach = call.data.get("approach", "default")
+
+        if approach == "stop_then_dock":
+            _LOGGER.info("Testing dock approach: stop then dock")
+            await coordinator.async_send_command({"cmd": 101, "mode": 0})  # Stop
+            await asyncio.sleep(3)
+            await coordinator.async_send_command({"cmd": 101, "mode": 2})  # Dock
+        elif approach == "direct_dock":
+            _LOGGER.info("Testing dock approach: direct dock")
+            await coordinator.async_send_command({"cmd": 101, "mode": 2})
+        elif approach == "mode_3":
+            _LOGGER.info("Testing dock approach: mode 3 (alternative)")
+            await coordinator.async_send_command({"cmd": 101, "mode": 3})
+        else:
+            _LOGGER.info("Testing dock approach: default (mode 2)")
+            await coordinator.async_send_command({"cmd": 101, "mode": 2})
+
     # Register services
     try:
         hass.services.async_register(
@@ -428,6 +518,9 @@ async def async_setup_services(hass: HomeAssistant, coordinator: SunseekerCoordi
         )
         hass.services.async_register(
             DOMAIN, SERVICE_EDGE_CUT, edge_cut_service
+        )
+        hass.services.async_register(
+            DOMAIN, SERVICE_TEST_DOCK, test_dock_service
         )
         _LOGGER.info("Successfully registered services for Sunseeker integration")
     except Exception as err:
